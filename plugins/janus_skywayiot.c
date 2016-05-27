@@ -86,6 +86,8 @@
 #include "plugin.h"
 
 #include <jansson.h>
+#include <stdlib.h>
+#include <sys/socket.h>
 
 #include "../debug.h"
 #include "../apierror.h"
@@ -193,6 +195,9 @@ static GHashTable *sessions;
 static GList *old_sessions;
 static janus_mutex sessions_mutex;
 
+static int g_data_fd;
+static int g_media_fd;
+
 static void janus_skywayiot_message_free(janus_skywayiot_message *msg) {
   if(!msg || msg == &exit_message)
     return;
@@ -218,7 +223,7 @@ static void janus_skywayiot_message_free(janus_skywayiot_message *msg) {
 #define JANUS_SKYWAYIOT_ERROR_INVALID_ELEMENT  413
 
 
-/* EchoTest watchdog/garbage collector (sort of) */
+/* SkywayIoT watchdog/garbage collector (sort of) */
 void *janus_skywayiot_watchdog(void *data);
 void *janus_skywayiot_watchdog(void *data) {
   JANUS_LOG(LOG_INFO, "EchoTest watchdog started\n");
@@ -272,10 +277,39 @@ int janus_skywayiot_init(janus_callbacks *callback, const char *config_path) {
   /* Read configuration */
   char filename[255];
   g_snprintf(filename, 255, "%s/%s.cfg", config_path, JANUS_SKYWAYIOT_PACKAGE);
-  JANUS_LOG(LOG_VERB, "Configuration file: %s\n", filename);
+  JANUS_LOG(LOG_INFO, "Configuration file: %s\n", filename);
   janus_config *config = janus_config_parse(filename);
-  if(config != NULL)
+  janus_mutex config_mutex;
+  if(config != NULL) {
     janus_config_print(config);
+  }
+  janus_mutex_init(&config_mutex);
+
+  if(config != NULL) {
+    GList *cl = janus_config_get_categories(config);
+    while(cl != NULL) {
+      janus_config_category *cat = (janus_config_category *)cl->data;
+      JANUS_LOG(LOG_INFO, "config:: name of category '%s'\n", cat->name);
+      if(cat->name == NULL || strcasecmp(cat->name, "external-interface") != 0) {
+        cl = cl->next;
+        continue;
+      }
+      janus_config_item *dataport = janus_config_get_item(cat, "dataport");
+      janus_config_item *mediaport = janus_config_get_item(cat, "mediaport");
+      janus_config_item *listenaddr = janus_config_get_item(cat, "listenaddr");
+
+      if(dataport == NULL || dataport->value == NULL
+          || mediaport == NULL || mediaport->value == NULL
+          || listenaddr == NULL || listenaddr->value == NULL) {
+        JANUS_LOG(LOG_WARN, "  -- Invalid dataport, mediaport, listenaddr, skipping opening '%s'... \n", cat->name);
+        cl = cl->next;
+        continue;
+      }
+
+      create_skywayiot_extinterface(atoi(dataport->value), atoi(mediaport->value), listenaddr->value);
+      cl = cl->next;
+    }
+  }
   /* This plugin actually has nothing to configure... */
   janus_config_destroy(config);
   config = NULL;
@@ -292,14 +326,14 @@ int janus_skywayiot_init(janus_callbacks *callback, const char *config_path) {
   watchdog = g_thread_try_new("etest watchdog", &janus_skywayiot_watchdog, NULL, &error);
   if(error != NULL) {
     g_atomic_int_set(&initialized, 0);
-    JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the EchoTest watchdog thread...\n", error->code, error->message ? error->message : "??");
+    JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the SkywayIoT watchdog thread...\n", error->code, error->message ? error->message : "??");
     return -1;
   }
   /* Launch the thread that will handle incoming messages */
-  handler_thread = g_thread_try_new("janus echotest handler", janus_skywayiot_handler, NULL, &error);
+  handler_thread = g_thread_try_new("janus SkywayIoT handler", janus_skywayiot_handler, NULL, &error);
   if(error != NULL) {
     g_atomic_int_set(&initialized, 0);
-    JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the EchoTest handler thread...\n", error->code, error->message ? error->message : "??");
+    JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the SkywayIoT handler thread...\n", error->code, error->message ? error->message : "??");
     return -1;
   }
   JANUS_LOG(LOG_INFO, "%s initialized!\n", JANUS_SKYWAYIOT_NAME);
@@ -932,4 +966,53 @@ error:
   g_free(error_cause);
   JANUS_LOG(LOG_VERB, "Leaving EchoTest handler thread\n");
   return NULL;
+}
+
+/* Helpers to create a listener filedescriptor */
+int create_skywayiot_extinterface(int dataport, int mediaport, char* listenaddr);
+int create_skywayiot_extinterface(int dataport, int mediaport, char* listenaddr) {
+  JANUS_LOG(LOG_INFO, "dataport = %d, mediaport = %d, listenaddr = %s\n", dataport, mediaport, listenaddr);
+
+  struct sockaddr_in data_sockaddr;      /* sockaddr for data channel */
+  struct sockaddr_in media_sockaddr;      /* sockaddr for media channel */
+
+  /* create a UDP socket for ext interface of data channel*/
+  if ((g_data_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+    JANUS_LOG(LOG_WARN, "cannot create socket for ext interface of data channel\n");
+    return -1;
+  }
+
+  /* bind the socket to any valid IP address and a specific port */
+  memset((char *)&data_sockaddr, 0, sizeof(data_sockaddr));
+  data_sockaddr.sin_family = AF_INET;
+  /* todo: listen addr should be applied */
+  data_sockaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+  data_sockaddr.sin_port = htons(dataport);
+
+  if (bind(g_data_fd, (struct sockaddr *)&data_sockaddr, sizeof(data_sockaddr)) < 0) {
+    JANUS_LOG(LOG_WARN, "bind failed for ext interface of data channel\n");
+    return -1;
+  }
+
+  /* create a UDP socket for ext interface of media channel*/
+  if ((g_media_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+    JANUS_LOG(LOG_WARN, "cannot create socket for ext interface of media channel\n");
+    return -1;
+  }
+
+  /* bind the socket to any valid IP address and a specific port */
+
+  memset((char *)&media_sockaddr, 0, sizeof(media_sockaddr));
+  media_sockaddr.sin_family = AF_INET;
+  /* todo: listen addr should be applied */
+  media_sockaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+  media_sockaddr.sin_port = htons(mediaport);
+
+  if (bind(g_media_fd, (struct sockaddr *)&media_sockaddr, sizeof(media_sockaddr)) < 0) {
+    JANUS_LOG(LOG_WARN, "bind failed for ext interface of media channel\n");
+    return -1;
+  }
+  JANUS_LOG(LOG_INFO, "succeed to create ext interface both data and media channel\n");
+
+  return 0;
 }
