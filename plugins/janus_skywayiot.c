@@ -167,6 +167,8 @@ static janus_callbacks *gateway = NULL;
 static GThread *handler_thread;
 static GThread *watchdog;
 static void *janus_skywayiot_handler(void *data);
+static void *janus_skywayiot_data_thread();
+static void *janus_skywayiot_media_thread();
 
 typedef struct janus_skywayiot_message {
   janus_plugin_session *handle;
@@ -197,6 +199,9 @@ static janus_mutex sessions_mutex;
 
 static int g_data_fd;
 static int g_media_fd;
+static struct sockaddr_in g_data_remaddr;
+static struct sockaddr_in g_media_remaddr;
+
 
 static void janus_skywayiot_message_free(janus_skywayiot_message *msg) {
   if(!msg || msg == &exit_message)
@@ -986,7 +991,7 @@ int create_skywayiot_extinterface(int dataport, int mediaport, char* listenaddr)
   memset((char *)&data_sockaddr, 0, sizeof(data_sockaddr));
   data_sockaddr.sin_family = AF_INET;
   /* todo: listen addr should be applied */
-  data_sockaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+  data_sockaddr.sin_addr.s_addr = htonl(inet_addr(listenaddr));
   data_sockaddr.sin_port = htons(dataport);
 
   if (bind(g_data_fd, (struct sockaddr *)&data_sockaddr, sizeof(data_sockaddr)) < 0) {
@@ -1005,7 +1010,7 @@ int create_skywayiot_extinterface(int dataport, int mediaport, char* listenaddr)
   memset((char *)&media_sockaddr, 0, sizeof(media_sockaddr));
   media_sockaddr.sin_family = AF_INET;
   /* todo: listen addr should be applied */
-  media_sockaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+  media_sockaddr.sin_addr.s_addr = htonl(inet_addr(listenaddr));
   media_sockaddr.sin_port = htons(mediaport);
 
   if (bind(g_media_fd, (struct sockaddr *)&media_sockaddr, sizeof(media_sockaddr)) < 0) {
@@ -1014,5 +1019,34 @@ int create_skywayiot_extinterface(int dataport, int mediaport, char* listenaddr)
   }
   JANUS_LOG(LOG_INFO, "succeed to create ext interface both data and media channel\n");
 
+  /* create thread to receive udp datagram for each channel */
+  GError *error = NULL;
+  g_thread_try_new("skywayiot_data_thread", &janus_skywayiot_data_thread, NULL, &error);
+  if(error != NULL) {
+    JANUS_LOG(LOG_WARN, "Got error %d (%s) trying to launch the data channel ext interface thread...\n", error->code, error->message ? error->message : "??");
+    return -1;
+  }
+  g_thread_try_new("skywayiot_media_thread", &janus_skywayiot_media_thread, NULL, &error);
+  if(error != NULL) {
+    JANUS_LOG(LOG_WARN, "Got error %d (%s) trying to launch the media channel ext interface thread...\n", error->code, error->message ? error->message : "??");
+    return -1;
+  }
   return 0;
+}
+
+static void *janus_skywayiot_data_thread() {
+  JANUS_LOG(LOG_INFO, "janus_skywayiot_data_thread is launched\n");
+
+  char buff[65535];
+  memset(buff, 0, 65535);
+  int bytes;
+
+  // todo: should be paused when @@@ condition happened.
+  while(true) {
+    bytes = recvfrom(g_data_fd, buff, 65535, 0, (struct sockaddr*)&g_data_remaddr, sizeof(g_data_remaddr));
+  }
+}
+
+static void *janus_skywayiot_media_thread() {
+  JANUS_LOG(LOG_INFO, "janus_skywayiot_media_thread is launched\n");
 }
