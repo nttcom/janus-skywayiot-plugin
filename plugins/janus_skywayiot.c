@@ -88,6 +88,8 @@
 #include <jansson.h>
 #include <stdlib.h>
 #include <sys/socket.h>
+#include <string.h>
+#include <errno.h>
 
 #include "../debug.h"
 #include "../apierror.h"
@@ -991,7 +993,8 @@ int create_skywayiot_extinterface(int dataport, int mediaport, char* listenaddr)
   memset((char *)&data_sockaddr, 0, sizeof(data_sockaddr));
   data_sockaddr.sin_family = AF_INET;
   /* todo: listen addr should be applied */
-  data_sockaddr.sin_addr.s_addr = htonl(inet_addr(listenaddr));
+  /* data_sockaddr.sin_addr.s_addr = htonl(inet_addr(listenaddr)); */
+  data_sockaddr.sin_addr.s_addr = htonl(INADDR_ANY);
   data_sockaddr.sin_port = htons(dataport);
 
   if (bind(g_data_fd, (struct sockaddr *)&data_sockaddr, sizeof(data_sockaddr)) < 0) {
@@ -1040,13 +1043,39 @@ static void *janus_skywayiot_data_thread() {
   char buff[65535];
   memset(buff, 0, 65535);
   int bytes;
+  socklen_t len = sizeof(g_data_remaddr);
 
   // todo: should be paused when @@@ condition happened.
-  while(true) {
-    bytes = recvfrom(g_data_fd, buff, 65535, 0, (struct sockaddr*)&g_data_remaddr, sizeof(g_data_remaddr));
+  for(;;) {
+    bytes = recvfrom(g_data_fd, buff, 65534, 0, (struct sockaddr*)&g_data_remaddr, &len);
+
+    if(bytes == -1) {
+      JANUS_LOG(LOG_WARN, "failed to recvfrm : %s\n", strerror(errno));
+    } else {
+      *(buff+bytes) = '\0';
+      JANUS_LOG(LOG_INFO, "receive message from dataport: %s (len=%d)\n", buff, bytes);
+    }
   }
 }
 
 static void *janus_skywayiot_media_thread() {
+  // this thread is used to store g_media_remaddr only.
+  //
   JANUS_LOG(LOG_INFO, "janus_skywayiot_media_thread is launched\n");
+  char buff[65535];
+  memset(buff, 0, 65535);
+  int bytes;
+  socklen_t len = sizeof(g_media_remaddr);
+
+  // todo: should be paused when @@@ condition happened.
+  for(;;) {
+    bytes = recvfrom(g_media_fd, buff, 65534, 0, (struct sockaddr*)&g_media_remaddr, &len);
+
+    if(bytes == -1) {
+      JANUS_LOG(LOG_WARN, "failed to recvfrm : %s\n", strerror(errno));
+    } else {
+      *(buff+bytes) = '\0';
+      JANUS_LOG(LOG_INFO, "receive message from mediaport: %s (len=%d)\n", buff, bytes);
+    }
+  }
 }
