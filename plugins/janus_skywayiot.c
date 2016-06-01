@@ -203,6 +203,8 @@ static int g_data_fd;
 static int g_media_fd;
 static struct sockaddr_in g_data_remaddr;
 static struct sockaddr_in g_media_remaddr;
+static janus_plugin_session *g_data_handle;
+static janus_plugin_session *g_media_handle;
 
 
 static void janus_skywayiot_message_free(janus_skywayiot_message *msg) {
@@ -578,6 +580,17 @@ void janus_skywayiot_incoming_data(janus_plugin_session *handle, char *buf, int 
     memcpy(text, buf, len);
     *(text+len) = '\0';
     JANUS_LOG(LOG_VERB, "Got a DataChannel message (%zu bytes) to bounce back: %s\n", strlen(text), text);
+
+    /* sendto extern udp socket, if g_data_remaddr exists */
+    if((void *)&g_data_remaddr != NULL) {
+      socklen_t len = sizeof(g_data_remaddr);
+      if( sendto(g_data_fd, text, strlen(text), 0, (struct sockaddr*)&g_data_remaddr, len) < 0 ) {
+        JANUS_LOG(LOG_WARN, "janus_skywayiot_incoming_data: failed to send data to udp ext interface\n");
+      } else {
+        g_data_handle = handle;
+      }
+    }
+
     /* We send back the same text with a custom prefix */
     const char *prefix = "Janus EchoTest here! You wrote: ";
     char *reply = g_malloc0(strlen(prefix)+len+1);
@@ -1040,8 +1053,9 @@ int create_skywayiot_extinterface(int dataport, int mediaport, char* listenaddr)
 static void *janus_skywayiot_data_thread() {
   JANUS_LOG(LOG_INFO, "janus_skywayiot_data_thread is launched\n");
 
-  char buff[65535];
+  char buff[65535], sendbuff[65535];
   memset(buff, 0, 65535);
+  memset(sendbuff, 0, 65535);
   int bytes;
   socklen_t len = sizeof(g_data_remaddr);
 
@@ -1054,6 +1068,19 @@ static void *janus_skywayiot_data_thread() {
     } else {
       *(buff+bytes) = '\0';
       JANUS_LOG(LOG_INFO, "receive message from dataport: %s (len=%d)\n", buff, bytes);
+      if(gateway && (void*)g_data_handle != NULL) {
+        gateway->relay_data(g_data_handle, buff, strlen(buff));
+      }
+
+      g_snprintf(sendbuff, 15 + strlen(buff), "SSG:data/echo: %s", buff);
+      *(sendbuff + 15 + strlen(buff)) = "\0";
+      bytes = sendto(g_data_fd, sendbuff, strlen(sendbuff), 0, (struct sockaddr*)&g_data_remaddr, len);
+
+      if(bytes == -1) {
+        JANUS_LOG(LOG_WARN, "failed to sendto : %s\n", strerror(errno));
+      } else {
+        JANUS_LOG(LOG_INFO, "sendto: %s (len = %d)\n", sendbuff, bytes);
+      }
     }
   }
 }
