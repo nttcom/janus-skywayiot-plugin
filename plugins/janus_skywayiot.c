@@ -538,6 +538,20 @@ void janus_skywayiot_incoming_rtp(janus_plugin_session *handle, int video, char 
         janus_recorder_save_frame(session->vrc, buf, len);
       else if(!video && session->arc)
         janus_recorder_save_frame(session->arc, buf, len);
+
+      /* todo: buff should be relayed
+    if((void *)&g_media_fd != NULL) {
+      socklen_t len = sizeof(g_media_remaddr);
+      if( sendto(g_media_fd, buf, sizeof(buf), 0, (struct sockaddr*)&g_media_remaddr, len) < 0 ) {
+        JANUS_LOG(LOG_WARN, "janus_skywayiot_incoming_rtp: failed to send data to udp ext interface\n");
+      } else {
+        g_media_handle = handle;
+      }
+    }
+      */
+
+
+      JANUS_LOG(LOG_INFO, "recieve rtp data len = %d\n", len);
       /* Send the frame back */
       gateway->relay_rtp(handle, video, buf, len);
     }
