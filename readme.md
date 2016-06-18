@@ -1,5 +1,7 @@
 # prepare for development
 
+## version 0.4
+
 copy and make symbolic links
 
 ```

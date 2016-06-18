@@ -1,6 +1,7 @@
-; The SkyWay IoT plugin doesn't need any configuration
-
 [external-interface]
-dataport = 15000
-mediaport = 15001
-listenaddr = 0.0.0.0
+data_recv_port = 15000
+data_recv_addr = 0.0.0.0
+data_send_port = 15001
+data_send_dest = 127.0.0.1
+media_send_port = 25000
+media_send_dest = 127.0.0.1
