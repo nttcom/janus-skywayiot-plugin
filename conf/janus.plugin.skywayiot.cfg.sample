@@ -1,7 +1,5 @@
 [external-interface]
-data_recv_port = 15000
-data_recv_addr = 0.0.0.0
-data_send_port = 15001
-data_send_dest = 127.0.0.1
+data_port = 15000
+data_addr = 0.0.0.0
 media_send_port = 25000
 media_send_dest = 127.0.0.1
