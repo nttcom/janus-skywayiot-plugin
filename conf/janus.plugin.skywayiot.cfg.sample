@@ -1,5 +1,5 @@
 [external-interface]
-data_port = 15000
+data_port = 14999
 data_addr = 0.0.0.0
 media_send_port = 25000
 media_send_dest = 127.0.0.1
